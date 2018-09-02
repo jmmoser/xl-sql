@@ -11,13 +11,13 @@ Option Explicit
 
 Private pColumn As Long
 Private pName As String
-Private pOperator As Long
+Private pOperator As OP
 Private pParameters As Variant
 Private pParameterCount As Long
 
-Public Sub InitiateProperties(Name As String, op As Long, Optional Params As Variant)
+Public Sub InitiateProperties(Name As String, Operator As OP, Optional Params As Variant)
     pName = Name
-    pOperator = op
+    pOperator = Operator
     pParameters = DB.ConvertToArray(Params)
     pParameterCount = DB.ArrayLength(pParameters)
 End Sub

@@ -3,22 +3,59 @@ Option Explicit
 Const TABLE_PREFIX = "tb_"
 
 
-Public Const OP_EQUAL = 1
-Public Const OP_NOT_EQUAL = 2
-Public Const OP_GREATER_THAN = 3
-Public Const OP_LESS_THAN = 4
-Public Const OP_GREATER_THAN_EQUAL = 5
-Public Const OP_LESS_THAN_EQUAL = 6
-Public Const OP_IN = 7
-Public Const OP_NOT_IN = 8
-Public Const OP_IS_NULL = 9
-Public Const OP_IS_NOT_NULL = 10
-Public Const OP_BETWEEN = 11
+Public Enum OP
+    EQUAL
+    NOT_EQUAL
+    GREATER_THAN
+    LESS_THAN
+    GREATER_THAN_EQUAL
+    LESS_THAN_EQUAL
+    IS_IN
+    IS_NOT_IN
+    IS_NULL
+    IS_NOT_NULL
+    BETWEEN
+End Enum
+
+Private Function OperatorStringToOP(ByVal opStr As String) As OP
+    opStr = VBA.Strings.UCase$(VBA.Strings.Trim$(opStr))
+    If VBA.Strings.Len(opStr) = 0 Then
+        Err.Raise Number:=1, Description:="Operator string is empty"
+    End If
+    Select Case opStr
+        Case "="
+            OperatorStringToOP = EQUAL
+        Case "!="
+        Case "<>"
+            OperatorStringToOP = NOT_EQUAL
+        Case ">"
+            OperatorStringToOP = GREATER_THAN
+        Case "<"
+            OperatorStringToOP = LESS_THAN
+        Case ">="
+            OperatorStringToOP = GREATER_THAN_EQUAL
+        Case "<="
+            OperatorStringToOP = LESS_THAN_EQUAL
+        Case "IN"
+            OperatorStringToOP = IS_IN
+        Case "NOT IN"
+            OperatorStringToOP = IS_NOT_IN
+        Case "IS NULL"
+            OperatorStringToOP = IS_NULL
+        Case "IS NOT NULL"
+            OperatorStringToOP = IS_NOT_NULL
+        Case "BETWEEN"
+            OperatorStringToOP = BETWEEN
+        Case Else
+            Err.Raise Number:=1, Description:="Not a valid operator"
+    End Select
+End Function
 
 
 Public Function ArrayLength(val As Variant) As Variant
     ArrayLength = UBound(val, 1) - LBound(val, 1) + 1
 End Function
+
 
 Public Function ConvertToArray(val As Variant) As Variant
     If IsArray(val) Then
@@ -27,6 +64,7 @@ Public Function ConvertToArray(val As Variant) As Variant
         ConvertToArray = Array(val)
     End If
 End Function
+
 
 Public Function CombineArrays(ByVal arr1 As Variant, arr2 As Variant) As Variant
     Dim i As Long
@@ -46,6 +84,29 @@ Public Function CombineArrays(ByVal arr1 As Variant, arr2 As Variant) As Variant
 End Function
 
 
+Public Function Delete(tableName As String, Optional ByVal predicates As Variant) As Long
+    Dim i As Long
+    Dim j As Long
+    Dim tmp As Variant
+    
+    Delete = 0
+    
+    With GetTable(tableName)
+        tmp = .UsedRange.Value
+        SetupPredicateColumnNumbers tableName, tmp, predicates
+        j = 2
+        For i = 2 To UBound(tmp, 1)
+            If RowMatchesPredicates(tmp, i, predicates) Then
+                .Rows(j).Delete
+                Delete = Delete + 1
+            Else
+                j = j + 1
+            End If
+        Next i
+    End With
+End Function
+
+
 Public Function Insert(tableName As String, ByVal columnNames As Variant, ByVal values As Variant) As Boolean
     Dim i As Long
     Dim j As Long
@@ -59,11 +120,10 @@ Public Function Insert(tableName As String, ByVal columnNames As Variant, ByVal 
         Err.Raise Number:=1, Description:="Array count of columns and values must match"
     End If
     
-    ReDim colNumbers(LBound(columnNames, 1) To UBound(columnNames, 1))
-    
     With GetTable(tableName)
         tmp = .UsedRange.Value
         
+        ReDim colNumbers(LBound(columnNames, 1) To UBound(columnNames, 1))
         For j = LBound(columnNames, 1) To UBound(columnNames, 1)
             colNumbers(j) = GetColumnNumber(tmp, columnNames(j))
             If colNumbers(j) < 1 Then
@@ -101,16 +161,8 @@ Public Function Update(tableName As String, ByVal values As Variant, Optional By
                 Err.Raise Number:=1, Description:="Column '" & values(i)(0) & "' not found in table '" & tableName & "'"
             End If
         Next i
-        
-        If IsMissing(predicates) = False Then
-            predicates = ConvertToArray(predicates)
-            For i = LBound(predicates, 1) To UBound(predicates, 1)
-                predicates(i).SetColumnNumber GetColumnNumber(tmp, predicates(i).Name)
-                If predicates(i).Column < 1 Then
-                    Err.Raise Number:=1, Description:="Column '" & predicates(i).Name & "' not found in table '" & tableName & "'"
-                End If
-            Next i
-        End If
+
+        SetupPredicateColumnNumbers tableName, tmp, predicates
     
         For i = 2 To UBound(tmp, 1)
             If RowMatchesPredicates(tmp, i, predicates) Then rowMatches.Add i
@@ -149,16 +201,8 @@ Public Function Query(tableName As String, ByVal selectColumns As Variant, Optio
             Err.Raise Number:=1, Description:="Column '" & selectColumns(i) & "' not found in table '" & tableName & "'"
         End If
     Next i
-    
-    If IsMissing(predicates) = False Then
-        predicates = ConvertToArray(predicates)
-        For i = LBound(predicates, 1) To UBound(predicates, 1)
-            predicates(i).SetColumnNumber GetColumnNumber(tmp, predicates(i).Name)
-            If predicates(i).Column < 1 Then
-                Err.Raise Number:=1, Description:="Column '" & predicates(i).Name & "' not found in table '" & tableName & "'"
-            End If
-        Next i
-    End If
+
+    SetupPredicateColumnNumbers tableName, tmp, predicates
     
     For i = 2 To UBound(tmp, 1)
         If RowMatchesPredicates(tmp, i, predicates) Then rowMatches.Add i
@@ -189,37 +233,37 @@ Private Function RowMatchesPredicates(data As Variant, rowNum As Long, Optional 
 
     For i = LBound(predicates, 1) To UBound(predicates, 1)
         Select Case predicates(i).Operator
-            Case OP_EQUAL
-                RowMatchesPredicates = (data(rowNum, predicates(i).Column) = predicates(i).Parameter(0))
-            Case OP_NOT_EQUAL
-                RowMatchesPredicates = (data(rowNum, predicates(i).Column) <> predicates(i).Parameter(0))
-            Case OP_GREATER_THAN
+            Case OP.EQUAL
+                RowMatchesPredicates = (CStr(data(rowNum, predicates(i).Column)) = predicates(i).Parameter(0))
+            Case OP.NOT_EQUAL
+                RowMatchesPredicates = (CStr(data(rowNum, predicates(i).Column)) <> predicates(i).Parameter(0))
+            Case OP.GREATER_THAN
                 RowMatchesPredicates = (data(rowNum, predicates(i).Column) > predicates(i).Parameter(0))
-            Case OP_LESS_THAN
+            Case OP.LESS_THAN
                 RowMatchesPredicates = (data(rowNum, predicates(i).Column) < predicates(i).Parameter(0))
-            Case OP_GREATER_THAN_EQUAL
+            Case OP.GREATER_THAN_EQUAL
                 RowMatchesPredicates = (data(rowNum, predicates(i).Column) >= predicates(i).Parameter(0))
-            Case OP_LESS_THAN_EQUAL
+            Case OP.LESS_THAN_EQUAL
                 RowMatchesPredicates = (data(rowNum, predicates(i).Column) <= predicates(i).Parameter(0))
-            Case OP_IN
+            Case OP.IS_IN
                 For j = 0 To predicates(i).ParameterCount() - 1
-                    If (data(rowNum, predicates(i).Column) = predicates(i).Parameter(j)) Then
+                    If (CStr(data(rowNum, predicates(i).Column)) = predicates(i).Parameter(j)) Then
                         RowMatchesPredicates = True
                         Exit For
                     End If
                 Next j
-            Case OP_NOT_IN
+            Case OP.IS_NOT_IN
                 For j = 0 To predicates(i).ParameterCount() - 1
-                    If (data(rowNum, predicates(i).Column) = predicates(i).Parameter(j)) Then
+                    If (CStr(data(rowNum, predicates(i).Column)) = predicates(i).Parameter(j)) Then
                         RowMatchesPredicates = False
                         Exit For
                     End If
                 Next j
-            Case OP_IS_NULL
+            Case OP.IS_NULL
                 RowMatchesPredicates = IsNullValue(data(rowNum, predicates(i).Column))
-            Case OP_IS_NOT_NULL
+            Case OP.IS_NOT_NULL
                 RowMatchesPredicates = Not IsNullValue(data(rowNum, predicates(i).Column))
-            Case OP_BETWEEN
+            Case OP.BETWEEN
                 RowMatchesPredicates = (data(rowNum, predicates(i).Column) >= predicates(i).Parameter(0)) And RowMatchesPredicates = (data(rowNum, predicates(i).Column) <= predicates(i).Parameter(1))
             Case Else
                 RowMatchesPredicates = False
@@ -229,14 +273,30 @@ Private Function RowMatchesPredicates(data As Variant, rowNum As Long, Optional 
 End Function
 
 
-Public Function Pred(Name As String, Operator As Long, Optional Params As Variant) As DBPredicate
+Public Function Pred(Name As String, ByVal Operator As Variant, Optional Params As Variant) As DBPredicate
+    Dim opVal As OP
     Set Pred = New DBPredicate
-    Pred.InitiateProperties Name, Operator, Params
+    If VarType(Operator) = vbString Then
+        opVal = OperatorStringToOP(Operator)
+    Else
+        opVal = Operator
+    End If
+    Pred.InitiateProperties Name, opVal, Params
 End Function
 
 
-
-
+Private Sub SetupPredicateColumnNumbers(tableName As String, data As Variant, predicates As Variant)
+    Dim i As Long
+    If IsMissing(predicates) = False Then
+        predicates = ConvertToArray(predicates)
+        For i = LBound(predicates, 1) To UBound(predicates, 1)
+            predicates(i).SetColumnNumber GetColumnNumber(data, predicates(i).Name)
+            If predicates(i).Column < 1 Then
+                Err.Raise Number:=1, Description:="Column '" & predicates(i).Name & "' not found in table '" & tableName & "'"
+            End If
+        Next i
+    End If
+End Sub
 
 
 Private Function GetColumnNumber(tmp As Variant, columnName As Variant) As Long
