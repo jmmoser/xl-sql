@@ -15,6 +15,13 @@ Public Enum OP
     IS_NULL
     IS_NOT_NULL
     BETWEEN
+    AND_PREDICATE
+    OR_PREDICATE
+End Enum
+
+Public Enum SORTORDER
+    ASCENDING
+    DESCENDING
 End Enum
 
 Private Function OperatorStringToOP(ByVal opStr As String) As OP
@@ -46,6 +53,10 @@ Private Function OperatorStringToOP(ByVal opStr As String) As OP
             OperatorStringToOP = IS_NOT_NULL
         Case "BETWEEN"
             OperatorStringToOP = BETWEEN
+        Case "AND"
+            OperatorStringToOP = AND_PREDICATE
+        Case "OR"
+            OperatorStringToOP = OR_PREDICATE
         Case Else
             Err.Raise Number:=1, Description:="Not a valid operator"
     End Select
@@ -225,6 +236,7 @@ End Function
 Private Function RowMatchesPredicates(data As Variant, rowNum As Long, Optional predicates As Variant) As Boolean
     Dim i As Long
     Dim j As Long
+    Dim tmp As Variant
 
     If IsMissing(predicates) = True Then
         RowMatchesPredicates = True
@@ -265,6 +277,27 @@ Private Function RowMatchesPredicates(data As Variant, rowNum As Long, Optional 
                 RowMatchesPredicates = Not IsNullValue(data(rowNum, predicates(i).Column))
             Case OP.BETWEEN
                 RowMatchesPredicates = (data(rowNum, predicates(i).Column) >= predicates(i).Parameter(0)) And RowMatchesPredicates = (data(rowNum, predicates(i).Column) <= predicates(i).Parameter(1))
+            Case OP.AND_PREDICATE
+                For j = 0 To predicates(i).ParameterCount() - 1
+                    If RowMatchesPredicates(data, rowNum, predicates(i).Parameter(j)) = False Then
+                        RowMatchesPredicates = False
+                        Exit For
+                    End If
+                Next j
+            Case OP.OR_PREDICATE
+                For j = 0 To predicates(i).ParameterCount() - 1
+'                    Set tmp = predicates(i).Parameter(j)
+                    If RowMatchesPredicates(data, rowNum, predicates(i).Parameter(j)) = True Then
+                        RowMatchesPredicates = True
+                        Exit For
+                    End If
+                Next j
+'                For j = 0 To predicates(i).ParameterCount() - 1
+'                    If RowMatchesPredicates(data, rowNum, predicates(i).Parameter(j)) = True Then
+'                        RowMatchesPredicates = True
+'                        Exit For
+'                    End If
+'                Next j
             Case Else
                 RowMatchesPredicates = False
         End Select
@@ -273,7 +306,30 @@ Private Function RowMatchesPredicates(data As Variant, rowNum As Long, Optional 
 End Function
 
 
-Public Function Pred(Name As String, ByVal Operator As Variant, Optional Params As Variant) As DBPredicate
+Public Function OrPred(ParamArray predicates() As Variant) As DBPredicate
+    Set OrPred = MultiPred(OP.OR_PREDICATE, CVar(predicates))
+End Function
+
+
+Public Function AndPred(ParamArray predicates() As Variant) As DBPredicate
+    Set AndPred = MultiPred(OP.AND_PREDICATE, CVar(predicates))
+End Function
+
+
+Private Function MultiPred(Operation As OP, predicates As Variant) As DBPredicate
+    Dim i As Long
+    Dim preds As Variant
+    
+    ReDim preds(0 To UBound(predicates, 1) - LBound(predicates, 1))
+    
+    For i = LBound(predicates, 1) To UBound(predicates, 1)
+        preds(i) = ConvertToArray(predicates(i))
+    Next i
+    Set MultiPred = Pred("", Operation, preds)
+End Function
+
+
+Public Function Pred(Name As String, ByVal Operator As Variant, ParamArray Params() As Variant) As DBPredicate
     Dim opVal As OP
     Set Pred = New DBPredicate
     If VarType(Operator) = vbString Then
@@ -281,18 +337,27 @@ Public Function Pred(Name As String, ByVal Operator As Variant, Optional Params 
     Else
         opVal = Operator
     End If
-    Pred.InitiateProperties Name, opVal, Params
+    Pred.InitiateProperties Name, opVal, CVar(Params)
 End Function
 
 
-Private Sub SetupPredicateColumnNumbers(tableName As String, data As Variant, predicates As Variant)
+Private Sub SetupPredicateColumnNumbers(tableName As String, data As Variant, ByRef predicates As Variant)
     Dim i As Long
+    Dim j As Long
+    Dim subpredicates As Variant
     If IsMissing(predicates) = False Then
         predicates = ConvertToArray(predicates)
         For i = LBound(predicates, 1) To UBound(predicates, 1)
-            predicates(i).SetColumnNumber GetColumnNumber(data, predicates(i).Name)
-            If predicates(i).Column < 1 Then
-                Err.Raise Number:=1, Description:="Column '" & predicates(i).Name & "' not found in table '" & tableName & "'"
+            If VBA.Strings.Len(predicates(i).Name) > 0 Then
+                predicates(i).SetColumnNumber GetColumnNumber(data, predicates(i).Name)
+                If predicates(i).Column < 1 Then
+                    Err.Raise Number:=1, Description:="Column '" & predicates(i).Name & "' not found in table '" & tableName & "'"
+                End If
+            Else
+                ' AND OR predicates
+                For j = 0 To predicates(i).ParameterCount() - 1
+                    SetupPredicateColumnNumbers tableName, data, predicates(i).Parameter(j)
+                Next j
             End If
         Next i
     End If
