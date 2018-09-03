@@ -20,6 +20,10 @@ Public Property Get Value(Name As Variant, Optional Index As Long = -1) As Varia
     
     If pColumnIndices.Exists(Name) = False Then Exit Property
     
+    If pIndex < 0 Then
+        pIndex = pIndex
+    End If
+    
     If Index > 0 Then
         If Index <= pDataUpperBound Then
             Value = pData(Index, pColumnIndices(Name))
@@ -41,8 +45,11 @@ End Sub
 
 
 Public Sub Cursor(Index As Long)
-    If Index < 0 Then ResetIndex
-    pIndex = Index
+    If Index < 0 Then
+        Call ResetIndex
+    Else
+        pIndex = Index
+    End If
 End Sub
 
 
